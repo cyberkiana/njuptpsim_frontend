@@ -1,12 +1,14 @@
 <script setup>
 import { ref, onMounted } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { UploadFilled } from "@element-plus/icons-vue";
 import {
   queryPageApi,
   addApi,
   deleteByIdApi,
   changeTeacherApi,
   queryTotalNumApi,
+  importClazzesApi,
 } from "@/api/clazz";
 
 defineOptions({ name: "ClazzIndex" });
@@ -150,7 +152,7 @@ const submitEdit = async () => {
   if (!editFormRef.value) return;
   editFormRef.value.validate(async (valid) => {
     if (!valid) return;
-    const result = await changeTeacherApi({ ...editForm.value.teacher });
+    const result = await changeTeacherApi(editForm.value);
     if (result && result.code) {
       ElMessage.success("修改成功");
       editDialogVisible.value = false;
@@ -208,6 +210,49 @@ const handleDelete = async (row) => {
   }
 };
 
+// ==================== Excel批量导入 ====================
+const importDialogVisible = ref(false);
+const importFile = ref(null);
+const importing = ref(false);
+const importResult = ref(null);
+
+const openImportDialog = () => {
+  importFile.value = null;
+  importResult.value = null;
+  importDialogVisible.value = true;
+};
+
+const handleFileChange = (file) => {
+  importFile.value = file.raw;
+};
+
+const submitImport = async () => {
+  if (!importFile.value) {
+    ElMessage.warning("请先选择 .xlsx 文件");
+    return;
+  }
+  importing.value = true;
+  try {
+    const formData = new FormData();
+    formData.append("file", importFile.value);
+    const result = await importClazzesApi(formData);
+    if (result && result.code) {
+      importResult.value = result.data;
+      ElMessage.success(`导入完成：成功 ${result.data.success} 条，失败 ${result.data.fail} 条`);
+      search();
+    } else {
+      ElMessage.error(result?.msg || "导入失败");
+    }
+  } catch (e) {
+    ElMessage.error("导入失败，请重试");
+  } finally {
+    importing.value = false;
+  }
+};
+
+// 下载导入模板（public/templates 下的静态文件）
+const templateFile = "/templates/班级导入模板.xlsx";
+
 // 生命周期
 // 进入界面默认无条件分页查询
 onMounted(() => {
@@ -248,6 +293,10 @@ onMounted(() => {
           <el-button type="primary" @click="handleSearch">查询</el-button>
           <el-button native-type="reset">重置</el-button>
           <el-button type="success" @click="openAddDialog">新增班级</el-button>
+          <el-button type="warning" @click="openImportDialog">Excel导入</el-button>
+          <a :href="templateFile" download>
+            <el-button link type="primary">下载模板</el-button>
+          </a>
         </el-form-item>
       </el-form>
     </div>
@@ -358,10 +407,42 @@ onMounted(() => {
         </el-form-item>
       </el-form>
       <template #footer>
-        <span class="dialog-footer">          
+        <span class="dialog-footer">
           <el-button type="primary" @click="submitEdit">保 存</el-button>
           <el-button @click="editDialogVisible = false">取 消</el-button>
         </span>
+      </template>
+    </el-dialog>
+
+    <!-- Excel批量导入班级对话框 -->
+    <el-dialog v-model="importDialogVisible" title="Excel批量导入班级" width="560px" destroy-on-close>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px;">
+        <p>列顺序：班级id | 年份(可选,默认当前年) | 教师姓名(可选,须为已有教师账号的姓名)</p>
+        <p>首行为表头时自动跳过；单行失败不影响其他行。</p>
+      </el-alert>
+      <el-upload
+        drag
+        accept=".xlsx"
+        :auto-upload="false"
+        :limit="1"
+        :on-change="handleFileChange"
+        :on-exceed="() => ElMessage.warning('一次只能选择一个文件')"
+      >
+        <el-icon style="font-size: 40px; color: #909399;"><UploadFilled /></el-icon>
+        <div>拖拽 .xlsx 文件到此处，或点击选择</div>
+      </el-upload>
+      <div v-if="importResult" class="import-result">
+        <el-divider />
+        <p>共 {{ importResult.total }} 行：成功 <b style="color:#67C23A">{{ importResult.success }}</b> 条，失败 <b style="color:#F56C6C">{{ importResult.fail }}</b> 条</p>
+        <ul v-if="importResult.errors && importResult.errors.length">
+          <li v-for="(err, i) in importResult.errors" :key="i" class="import-error">{{ err }}</li>
+        </ul>
+      </div>
+      <template #footer>
+        <div>
+          <el-button @click="importDialogVisible=false">关闭</el-button>
+          <el-button type="primary" :loading="importing" @click="submitImport">开始导入</el-button>
+        </div>
       </template>
     </el-dialog>
   </div>
@@ -372,7 +453,7 @@ onMounted(() => {
   margin: 15px 0px;
 }
 .page {
-  margin-top: 12px; 
+  margin-top: 12px;
   text-align: right;
 }
 
@@ -383,5 +464,20 @@ onMounted(() => {
 .link:hover {
   color: blue; /* 鼠标悬停时的颜色 */
   text-decoration: underline; /* 鼠标悬停时添加下划线 */
+}
+
+.import-result {
+  margin-top: 4px;
+}
+.import-result ul {
+  max-height: 140px;
+  overflow-y: auto;
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+.import-error {
+  color: #f56c6c;
+  font-size: 13px;
+  line-height: 20px;
 }
 </style>

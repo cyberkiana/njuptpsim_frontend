@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { loginApi} from '@/api/login'
+import { getAvatarApi } from '@/api/user'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
@@ -16,11 +17,21 @@ const login = async () => {
   if(result.code){ //成功
     //提示信息
     ElMessage.success('登录成功');
-    //存储当前登录用户信息和token
+    //存储当前登录用户信息和token（token/id 本身就是字符串，不能再用 JSON.stringify 包引号）
     userStore.setUser(JSON.stringify(result.data));
-    userStore.setToken(JSON.stringify(result.data.token));
-    userStore.setId(JSON.stringify(result.data.id));
+    userStore.setToken(result.data.token);
+    userStore.setId(result.data.id);
     ElMessage.success('存储成功');
+    //拉取该用户的头像并缓存到本地, 供layout头部显示
+    try {
+      const avatarRes = await getAvatarApi(result.data.id);
+      // 无论是否为空都要写入, 覆盖掉上一个登录用户残留的头像
+      userStore.setAvatar(avatarRes?.data || '');
+    } catch (e) {
+      //头像拉取失败不影响登录流程
+      console.log('拉取头像失败', e);
+      userStore.setAvatar('');
+    }
     //跳转页面 - 首页
     if(result.data.roleName==="admin"){
       router.push('/root/home');

@@ -5,9 +5,9 @@ import request from '@/utils/request'
 export const getStudentReservationsApi = (stuId) =>
   request.get(`/stu/${stuId}/reservations`)
 
-// 取消预约
+// 取消预约（day/slot 必须作为查询参数传递, 之前误传为 axios config 导致后端收不到参数）
 export const deleteReservationApi = (stuId, id, day, slot) =>
-  request.delete(`/stu/${stuId}/reservations/${id}`, {day,slot})
+  request.delete(`/stu/${stuId}/reservations/${id}`, { params: { day, slot } })
 
 // 获取学生任务总表（包含已完成和未完成的实验）
 export const getStudentTasksApi = (stuId) =>

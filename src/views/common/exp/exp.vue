@@ -1,4 +1,10 @@
 <template>
+  <!-- 返回按钮独立于实验内容区之外, 避免与标题重合 -->
+  <div class="detail-page-wrapper">
+    <div class="back-bar">
+      <el-button class="back-btn" :icon="ArrowLeft" @click="goBackToList">返回</el-button>
+    </div>
+
   <div class="experiment-detail-page">
     <!-- 页面头部：实验标题 -->
     <div class="page-header">
@@ -10,30 +16,41 @@
       <div ref="webglRef" class="webgl-canvas"></div>
     </div>
 
-    <!-- 互动按钮区：点赞 / 十分简单 / 十分困难 -->
+    <!-- 互动按钮区：点赞 / 十分简单 / 十分困难（每用户三选一, 仅能评价一次） -->
     <div class="action-buttons">
       <el-button
-        type="default"
         :icon="Share"
         :loading="actionLoading"
+        :disabled="!!myEvaluation"
+        :type="myEvaluation === 'likes' ? 'primary' : 'default'"
         @click="handleEvaluation('likes')"
       >
         👍 点赞 {{ expInfo.likes }}
       </el-button>
       <el-button
-        type="success"
         :loading="actionLoading"
-        @click="handleEvaluation('easyCount')"
+        :disabled="!!myEvaluation"
+        :type="myEvaluation === 'easy' ? 'success' : 'default'"
+        @click="handleEvaluation('easy')"
       >
         😊 十分简单 {{ expInfo.easyCount }}
       </el-button>
       <el-button
-        type="danger"
         :loading="actionLoading"
-        @click="handleEvaluation('hardCount')"
+        :disabled="!!myEvaluation"
+        :type="myEvaluation === 'hard' ? 'danger' : 'default'"
+        @click="handleEvaluation('hard')"
       >
         😭 十分困难 {{ expInfo.hardCount }}
       </el-button>
+      <el-tag v-if="myEvaluation" type="success" effect="light" size="small" class="evaluated-tip">
+        已评价：{{ myEvaluationText }}
+      </el-tag>
+    </div>
+
+    <!-- 实验完成横幅：WebGL实验运行结束(收到完成消息)后自动提交成绩并展示 -->
+    <div v-if="completedInfo" class="complete-banner">
+      🎉 恭喜完成实验！成绩：<b>{{ completedInfo.score }}</b> 分，已自动记入成绩单
     </div>
 
     <!-- 评论区 -->
@@ -151,16 +168,20 @@
       </div>
     </div>
   </div>
+  </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, computed, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Share } from '@element-plus/icons-vue'
+import { ArrowLeft, Share } from '@element-plus/icons-vue'
 import * as THREE from 'three'
 import {
   getExpDetailApi,
   updateEvaluationApi,
+  getMyEvaluationApi,
+  completeExpApi,
   getCommentsApi,
   getRepliesApi,
   postCommentApi,
@@ -168,9 +189,22 @@ import {
   likeCommentApi,
   likeReplyApi
 } from '@/api/experiment'
+import { useUserStore } from '@/stores/user'
+
+const route = useRoute()
+const router = useRouter()
+
+// 返回实验资源列表页: 当前路径去掉末段实验id
+const goBackToList = () => {
+  const base = route.path.replace(/\/[^/]+$/, '')
+  router.push(base)
+}
+
+const userStore = useUserStore()
 
 // ==================== 常量配置 ====================
-const expId = 1 // 从路由获取或props传入
+// 从路由参数获取实验ID, 如 /stu/exp/1
+const expId = Number(route.params.id) || 1
 
 // 当前用户信息 (从store或localStorage获取)
 const currentUser = ref({
@@ -180,6 +214,13 @@ const currentUser = ref({
 })
 
 // ==================== 组件状态 ====================
+// 评价文案映射
+const myEvaluationText = computed(() => ({
+  likes: '点赞支持！',
+  easy: '非常简单！',
+  hard: '十分困难！'
+}[myEvaluation.value]))
+
 const expInfo = reactive({
   title: '',
   url: '',
@@ -192,6 +233,12 @@ const sortType = ref('time')
 const actionLoading = ref(false)
 const sendingComment = ref(false)
 const newCommentContent = ref('')
+
+// 我的评价(likes/easy/hard/null)：非空表示已评价, 不可重复
+const myEvaluation = ref(null)
+// 学生完成实验
+const isStudent = (JSON.parse(localStorage.getItem('loginUser') || 'null') || {}).roleName === 'student'
+const stuId = isStudent ? (JSON.parse(localStorage.getItem('loginUser') || 'null') || {}).id : ''
 
 // 回复相关状态
 const replyContent = ref('')
@@ -276,27 +323,54 @@ const loadComments = async () => {
   }
 }
 
-// 点赞/简单/困难
+// 点赞/简单/困难：每用户仅能三选一评价一次（选择后不可更改）
 const handleEvaluation = async (type) => {
+  if (myEvaluation.value) {
+    ElMessage.warning('您已评价过该实验，不能重复评价')
+    return
+  }
   actionLoading.value = true
   try {
-    const params = {}
-    if (type === 'likes') params.likes = 1
-    else if (type === 'easyCount') params.easyCount = 1
-    else if (type === 'hardCount') params.hardCount = 1
-    
-    await updateEvaluationApi(expId, params)
-    
+    // 后端按 type 记录评价归属并计数+1
+    await updateEvaluationApi(expId, { type })
+    myEvaluation.value = type
+
     // 更新本地数据
     if (type === 'likes') expInfo.likes++
-    else if (type === 'easyCount') expInfo.easyCount++
-    else if (type === 'hardCount') expInfo.hardCount++
-    
+    else if (type === 'easy') expInfo.easyCount++
+    else if (type === 'hard') expInfo.hardCount++
+
     ElMessage.success('评价成功')
   } catch (error) {
     ElMessage.error('操作失败，请重试')
   } finally {
     actionLoading.value = false
+  }
+}
+
+// 学生完成WebGL实验: 实验运行结束时由实验页面向宿主页面 postMessage,
+// 本页监听消息后自动提交成绩到 completions 表（同一任务仅记录一次）。
+// 消息约定：event.data = { type: 'experimentComplete', score: 0~100 }（score可省略, 默认100）
+const completedInfo = ref(null)   // { score } 完成后展示
+const handleExpMessage = async (event) => {
+  if (!isStudent) return
+  let data = event.data
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data) } catch (e) { return }
+  }
+  if (!data || data.type !== 'experimentComplete') return
+  if (completedInfo.value) return   // 已提交过, 防重复
+
+  const score = Math.max(0, Math.min(100, Number(data.score) || 100))
+  try {
+    const res = await completeExpApi(stuId, expId, score)
+    if (res && res.code) {
+      completedInfo.value = { score: res.data.score ?? score }
+    } else {
+      ElMessage.warning(res?.msg || '成绩记录失败')
+    }
+  } catch (error) {
+    ElMessage.warning(error?.response?.data?.msg || '成绩记录失败，请重试')
   }
 }
 
@@ -473,19 +547,13 @@ const initWebGL = (url) => {
 }
 
 // ==================== 生命周期 ====================
-// 获取当前用户信息 (示例，实际从store获取)
+// 获取当前用户信息 (从登录缓存与store中获取)
 const getCurrentUser = () => {
-  // 模拟从localStorage或vuex获取
-  const user = localStorage.getItem('userInfo')
-  if (user) {
-    currentUser.value = JSON.parse(user)
-  } else {
-    // 演示用默认用户，实际应跳转登录
-    currentUser.value = {
-      id: 'demo_user_001',
-      userName: '热心网友',
-      avatar: 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
-    }
+  const loginUser = userStore.getLoginUserInfo()
+  currentUser.value = {
+    id: loginUser?.id || '',
+    userName: loginUser?.name || '',
+    avatar: userStore.avatar || ''
   }
 }
 
@@ -493,7 +561,16 @@ onMounted(async () => {
   getCurrentUser()
   await loadExpDetail()
   await loadComments()
-  
+  // 加载我的评价状态（已评价则按钮置灰并高亮所选项）
+  if (isStudent) {
+    try {
+      const res = await getMyEvaluationApi(expId)
+      myEvaluation.value = res?.data || null
+    } catch (e) { /* 未评价时忽略 */ }
+  }
+
+  // 监听WebGL实验发来的“实验完成”消息, 自动提交成绩
+  window.addEventListener('message', handleExpMessage)
   nextTick(() => {
     if (webglRef.value) {
       const resizeObserver = new ResizeObserver(() => {
@@ -513,6 +590,9 @@ onMounted(async () => {
 
 import { onBeforeUnmount } from 'vue'
 onBeforeUnmount(() => {
+  window.removeEventListener('message', handleExpMessage)
+})
+onBeforeUnmount(() => {
   if (webglRef.value && webglRef.value._cleanup) {
     webglRef.value._cleanup()
   }
@@ -522,8 +602,40 @@ onBeforeUnmount(() => {
 })
 </script>
 
-<style scoped>
+<style scoped>
+.evaluated-tip {
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+
+.complete-banner {
+  margin: 0 auto 16px;
+  max-width: 640px;
+  padding: 14px 20px;
+  background: #f0f9eb;
+  border: 1px solid #67c23a;
+  border-radius: 12px;
+  color: #529b2e;
+  font-size: 16px;
+}
+
+.detail-page-wrapper {
+  min-height: 100vh;
+  background-color: #eef1f6;
+}
+
+.back-bar {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 12px 24px 0;
+}
+
+.back-btn {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
 .experiment-detail-page {
+  position: relative;
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px 24px;

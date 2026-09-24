@@ -61,10 +61,9 @@ const loading = ref({
   appointments: false
 })
 
-// 时段转换函数：将slot数字转换为时间段字符串
+// 时段转换函数：slot 即起始小时（与预约页/数据库一致，如 slot=8 代表 8:00-9:00）
 const formatSlot = (slot) => {
-  // slot从0开始，0代表6:00-7:00，1代表7:00-8:00，...，16代表22:00-23:00
-  const startHour = 6 + slot
+  const startHour = slot
   const endHour = startHour + 1
   return `${startHour.toString().padStart(2, '0')}:00-${endHour.toString().padStart(2, '0')}:00`
 }

@@ -1,22 +1,23 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
-import { 
-  ElTable, 
-  ElTableColumn, 
-  ElButton, 
-  ElInput, 
+import { computed, ref, onMounted, watch } from 'vue'
+import {
+  ElTable,
+  ElTableColumn,
+  ElButton,
+  ElInput,
   ElDatePicker,
   ElDialog,
   ElMessage,
   ElMessageBox,
   ElSpace,
+  ElSwitch,
   ElTag,
   ElCard,
   ElRow,
   ElCol,
   ElStatistic
 } from 'element-plus'
-import { 
+import {
   Calendar,
   Refresh,
   Setting,
@@ -31,12 +32,21 @@ import {
   updateMaxApi,
   batchUpdateMaxApi,
   stuReservationApi,
+  updateActiveApi,
 } from '@/api/root/reservation'
 
 // 数据列表
 const reservationList = ref([])
 const loading = ref(false)
 const selectedDate = ref(new Date())
+
+// 当前选中的是否为过去日期(过去日期仅可查看, 不可修改最大人数)
+const isPastDate = computed(() => {
+  const d = selectedDate.value instanceof Date ? selectedDate.value : new Date(selectedDate.value)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return d.getTime() < today.getTime()
+})
 
 // 弹窗控制
 const showDialog = ref(false)
@@ -101,6 +111,11 @@ const fetchReservations = async () => {
 
 // 更新最大人数
 const updateMaxCount = async (item) => {
+  if (isPastDate.value) {
+    ElMessage.warning('过去日期的时段不能修改最大人数')
+    item.editingMax = item.maxCount
+    return
+  }
   if (!item.editingMax || item.editingMax < 1) {
     ElMessage.warning('最大人数必须为大于0的数字')
     item.editingMax = item.maxCount
@@ -112,7 +127,7 @@ const updateMaxCount = async (item) => {
   item.maxCount = item.editingMax
 
   try {
-    await updateMaxApi()
+    await updateMaxApi(item.id, Number(item.editingMax))
     ElMessage.success(`时段 ${item.startHour}:00 最大人数已更新为 ${item.editingMax}`)
   } catch (error) {
     item.maxCount = originalMax
@@ -143,6 +158,18 @@ const applyBatchMaxCount = async () => {
     ElMessage.success(`所有时段最大人数已统一设置为 ${batchMaxCount.value}`)
   } catch (error) {
     ElMessage.error('批量设置失败: ' + error.message)
+  }
+}
+
+// 开关某时段的预约权限（isActive: 1允许 0禁止）
+const toggleActive = async (row, val) => {
+  try {
+    await updateActiveApi(row.id, val)
+    ElMessage.success(`时段 ${String(row.slot).padStart(2, '0')}:00 已${val === 1 ? '开放' : '关闭'}预约`)
+  } catch (error) {
+    // 失败回滚开关状态
+    row.isActive = val === 1 ? 0 : 1
+    ElMessage.error('设置失败: ' + (error.response?.data?.msg || error.message))
   }
 }
 
@@ -312,24 +339,38 @@ const formatDate = (date) => {
           </template>
         </el-table-column>
         
+        <el-table-column label="允许预约" width="100" align="center">
+          <template #default="{ row }">
+            <el-switch
+              v-model="row.isActive"
+              :active-value="1"
+              :inactive-value="0"
+              @change="val => toggleActive(row, val)"
+            />
+          </template>
+        </el-table-column>
+
         <el-table-column label="最大允许人数" width="200" align="center">
           <template #default="{ row }">
-            <el-input 
-              v-model.number="row.editingMax" 
-              type="number"
-              min="1"
-              size="large"
-              @keyup.enter="updateMaxCount(row)"
-              class="max-count-input"
-            >
-              <template #append>
-                <el-button 
-                  :icon="Check" 
-                  @click="updateMaxCount(row)"
-                  :disabled="row.editingMax === row.maxCount"
-                />
-              </template>
-            </el-input>
+            <el-tooltip content="过去日期仅可查看" :disabled="!isPastDate" placement="top">
+              <el-input 
+                v-model.number="row.editingMax" 
+                type="number"
+                min="1"
+                size="large"
+                :disabled="isPastDate"
+                @keyup.enter="updateMaxCount(row)"
+                class="max-count-input"
+              >
+                <template #append>
+                  <el-button 
+                    :icon="Check" 
+                    @click="updateMaxCount(row)"
+                    :disabled="row.editingMax === row.maxCount || isPastDate"
+                  />
+                </template>
+              </el-input>
+            </el-tooltip>
           </template>
         </el-table-column>
         

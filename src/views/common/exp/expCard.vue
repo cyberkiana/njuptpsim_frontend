@@ -29,20 +29,19 @@ const props = defineProps({
 
 const emit = defineEmits(['click'])
 
-// 计算可见标签（限制显示数量）
+// 计算可见标签（限制显示数量）；tags 兜底为数组，避免后端数据缺字段时渲染崩溃
 const visibleTags = computed(() => {
-  return props.experiment.tags.slice(0, props.maxVisibleTags)
+  const tags = Array.isArray(props.experiment.tags) ? props.experiment.tags : []
+  return tags.slice(0, props.maxVisibleTags)
 })
 
 // 根据标签内容返回不同的样式类型
 const getTagType = (tag) => {
   const tagTypes = {
-    '物理': 'primary',
-    '化学': 'success',
-    '生物': 'warning',
-    '编程': 'danger',
-    'VR': 'info',
-    'AR': ''
+    '声学': 'warning',
+    '光学': 'success',
+    '热学': 'danger',
+    '电学': 'primary'
   }
   return tagTypes[tag] || 'info'
 }
@@ -134,12 +133,12 @@ const handleClick = () => {
           </el-tag>
           
           <!-- 更多标签提示 -->
-          <span 
-            v-if="experiment.tags.length > maxVisibleTags" 
+          <span
+            v-if="visibleTags.length > maxVisibleTags"
             class="more-tags"
-            :title="`还有 ${experiment.tags.length - maxVisibleTags} 个标签`"
+            :title="`还有 ${visibleTags.length - maxVisibleTags} 个标签`"
           >
-            +{{ experiment.tags.length - maxVisibleTags }}
+            +{{ visibleTags.length - maxVisibleTags }}
           </span>
         </div>
         

@@ -1,12 +1,19 @@
 <script setup>
   import {ref, onMounted} from "vue";
   import {dayjs, ElMessage, ElMessageBox} from "element-plus";
+  import {UploadFilled} from "@element-plus/icons-vue";
   import {
     queryTotalNumApi,
     queryPageApi,
     addApi,
     deleteByIdApi,
     editApi,
+    importUsersApi,
+    resetPasswordApi,
+    clearAvatarApi,
+    banUserApi,
+    unbanUserApi,
+    getUserBansApi,
   } from "@/api/user";
 
  defineOptions({ name: "UserIndex"})
@@ -35,7 +42,6 @@ const editForm = ref({
   name: "",
   roleId: "",
   account: "",
-  password: "",
 })
 
  // 列表与分页查询
@@ -56,18 +62,78 @@ const rules = ref({
   name: [{ required: true, message: "请输入用户姓名", trigger: "blur"}],
   roleId: [{ required: true, message: "请选择用户身份", trigger: "blur"}],
   account: [{required: true, message: "请输入账号", trigger: "blur"}],
-  password: [{required: true, message: "请输入密码", trigger: "blur"}],
 });
 
-// 用户身份
+// 账号封禁名单(封禁中)与全部记录
+const banList = ref([])
+
+const loadBans = async () => {
+  try {
+    const res = await getUserBansApi()
+    banList.value = res?.data || []
+  } catch (e) {
+    console.error('获取封禁名单失败:', e)
+  }
+}
+
+const isBanned = (userId) => banList.value.some(b => b.userId === userId && b.status === 1)
+
+// 用户身份（与数据库 roles 表一致：1管理员 2教师 3学生）
 const roles = ref([
   {value: 1, label: "管理员"},
   {value: 2, label: "教师"},
   {value: 3, label: "学生"}
 ]);
 
+// ========== 封禁/解封账号 ==========
+const banDialogVisible = ref(false)
+const banTarget = ref(null)
+const banReason = ref('')
+
+const openBanDialog = (row) => {
+  banTarget.value = row
+  banReason.value = ''
+  banDialogVisible.value = true
+}
+
+const submitBan = async () => {
+  if (!banTarget.value) return
+  try {
+    const res = await banUserApi({ userId: banTarget.value.id, reason: banReason.value })
+    if (res && res.code) {
+      ElMessage.success(`账号 ${banTarget.value.id} 已封禁`)
+      banDialogVisible.value = false
+      search()
+    } else {
+      ElMessage.error(res?.msg || '封禁失败')
+    }
+  } catch (e) {
+    ElMessage.error('封禁失败，请重试')
+  }
+}
+
+const handleUnbanRow = async (row) => {
+  //banList 已在 search()/loadBans() 加载, 直接复用避免整表重查
+  const rec = banList.value.find(b => b.userId === row.id && b.status === 1)
+  if (!rec) {
+    ElMessage.error('未找到封禁记录')
+    return
+  }
+  try {
+    const r = await unbanUserApi(rec.id)
+    if (r && r.code) {
+      ElMessage.success(`账号 ${row.id} 已解封`)
+      search()
+    } else {
+      ElMessage.error(r?.msg || '解封失败')
+    }
+  } catch (e) {
+    ElMessage.error('解封失败，请重试')
+  }
+}
 //用户查询
 const search = async () => {
+  await loadBans()
   const hasId = queryUserForm.value.id && queryUserForm.value.id.trim() !== "";
   const hasName = queryUserForm.value.name && queryUserForm.value.name.trim() !== "";
   const hasRole = queryUserForm.value.roleId
@@ -164,7 +230,6 @@ const openEditDialog = (row) => {
     name: row.name,
     roleId: row.roleId,
     account: row.account,
-    password: row.password,
   }
   editDialogVisible.value = true;
 };
@@ -191,12 +256,54 @@ const submitAdd = () => {
   )
 };
 
+// 重置密码为初始密码123456，确认后立即生效
+const handleResetPassword = async () => {
+  try {
+    await ElMessageBox.confirm(
+      `确认将 ${editForm.value.id} 的密码重置为 123456 吗？重置后旧密码立即失效。`,
+      "重置密码",
+      { type: "warning", confirmButtonText: "重置", cancelButtonText: "取消" }
+    )
+  } catch (e) { return }
+  try {
+    const r = await resetPasswordApi(editForm.value.id)
+    if (r && r.code) {
+      ElMessage.success(`密码已重置为 123456`)
+    } else {
+      ElMessage.error(r?.msg || '重置失败')
+    }
+  } catch (e) {
+    ElMessage.error('重置失败，请重试')
+  }
+}
+
+// 删除用户头像，确认后立即生效
+const handleClearAvatar = async () => {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除 ${editForm.value.id} 的头像吗？删除后立即生效。`,
+      "删除头像",
+      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" }
+    )
+  } catch (e) { return }
+  try {
+    const r = await clearAvatarApi(editForm.value.id)
+    if (r && r.code) {
+      ElMessage.success('头像已删除')
+    } else {
+      ElMessage.error(r?.msg || '删除失败')
+    }
+  } catch (e) {
+    ElMessage.error('删除失败，请重试')
+  }
+}
+
 // 提交修改表单
 const submitEdit = async () => {
   if(!editForm.value) return;
   try{
     await editFormRef.value.validate();
-    const r = await editApi(...editForm.value);
+    const r = await editApi({...editForm.value});
     if(r && r.code){
         ElMessage.success("修改成功");
         editDialogVisible.value = false;
@@ -210,6 +317,51 @@ const submitEdit = async () => {
   }
   
 };
+
+// ==================== Excel批量导入 ====================
+const importDialogVisible = ref(false);
+const importFile = ref(null);       // 选中的文件
+const importing = ref(false);       // 上传中
+const importResult = ref(null);     // { total, success, fail, errors: [] }
+
+const openImportDialog = () => {
+  importFile.value = null;
+  importResult.value = null;
+  importDialogVisible.value = true;
+};
+
+// 手动选择文件（不走自动上传）
+const handleFileChange = (file) => {
+  importFile.value = file.raw;
+};
+
+// 提交导入
+const submitImport = async () => {
+  if (!importFile.value) {
+    ElMessage.warning("请先选择 .xlsx 文件");
+    return;
+  }
+  importing.value = true;
+  try {
+    const formData = new FormData();
+    formData.append("file", importFile.value);
+    const r = await importUsersApi(formData);
+    if (r && r.code) {
+      importResult.value = r.data;
+      ElMessage.success(`导入完成：成功 ${r.data.success} 条，失败 ${r.data.fail} 条`);
+      search();
+    } else {
+      ElMessage.error(r?.msg || "导入失败");
+    }
+  } catch (e) {
+    ElMessage.error("导入失败，请重试");
+  } finally {
+    importing.value = false;
+  }
+};
+
+// 下载导入模板（public/templates 下的静态文件）
+const templateFile = "/templates/用户导入模板.xlsx";
 
 // 换页
 const handlePageChange = (page) => {
@@ -270,6 +422,10 @@ onMounted(() => {
           <el-button type="primary" @click="handleSearch">查询</el-button>
           <el-button native-type="reset">重置</el-button>
           <el-button type="success" @click="openAddDialog">新增</el-button>
+          <el-button type="warning" @click="openImportDialog">Excel导入</el-button>
+          <a :href="templateFile" download>
+            <el-button link type="primary">下载模板</el-button>
+          </a>
         </el-form-item>
       </el-form>
     </div>
@@ -299,12 +455,13 @@ onMounted(() => {
           width="200px"
           align="center"
         />
-        <el-table-column
-          label="密码"
-          prop="password"
-          width="200px"
-          align="center"
-        />
+        <el-table-column label="账号状态" width="100px" align="center">
+          <template #default="scope">
+            <el-tag :type="isBanned(scope.row.id) ? 'danger' : 'success'" size="small">
+              {{ isBanned(scope.row.id) ? '封禁中' : '正常' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column
           label="创建时间"
           prop="createTime"
@@ -313,6 +470,8 @@ onMounted(() => {
         />
         <el-table-column label="操作" width="200px" align="center">
           <template #default="scope">
+            <el-button v-if="!isBanned(scope.row.id)" type="warning" size="small" style="margin-left: 8px;" @click="openBanDialog(scope.row)">封禁</el-button>
+            <el-button v-else type="success" size="small" @click="handleUnbanRow(scope.row)">解封</el-button>
             <el-button type="danger" size="small" @click="handleDelete(scope.row)">删除</el-button>
             <el-button type="primary" size="small" style="margin-left: 8px;" @click="openEditDialog(scope.row)">编辑</el-button>
           </template>
@@ -396,14 +555,64 @@ onMounted(() => {
           <el-form-item label="账号" prop="account">
             <el-input v-model="editForm.account"/>
           </el-form-item>
-          <el-form-item label="密码" prop="password">
-            <el-input v-model="editForm.password"/>
-          </el-form-item>
         </el-form>
+        <div class="edit-actions">
+          <el-button type="warning" plain @click="handleResetPassword">重置密码为123456</el-button>
+          <el-button type="danger" plain @click="handleClearAvatar">删除头像</el-button>
+        </div>
         <template #footer>
           <div>
             <el-button @click="submitEdit" type="primary">确定</el-button>
             <el-button @click="editDialogVisible=false">取消</el-button>
+          </div>
+        </template>
+      </el-dialog>
+
+      <!-- 封禁账号对话框 -->
+      <el-dialog v-model="banDialogVisible" :title="`封禁账号 ${banTarget?.id || ''}`" width="460px" destroy-on-close>
+        <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px;"
+          title="封禁后该账号无法登录，已登录的会话也会被强制拦截。" />
+        <el-form label-width="90px">
+          <el-form-item label="封禁原因">
+            <el-input v-model="banReason" placeholder="输入封禁原因(可选)" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <div>
+            <el-button @click="banDialogVisible=false">取消</el-button>
+            <el-button type="danger" @click="submitBan">确认封禁</el-button>
+          </div>
+        </template>
+      </el-dialog>
+
+      <!-- Excel批量导入用户对话框 -->
+      <el-dialog v-model="importDialogVisible" title="Excel批量导入用户" width="560px" destroy-on-close>
+        <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px;">
+          <p>列顺序：用户id | 姓名 | 密码 | 角色(学生/教师/管理员，或数字3/2/1) | 账号(可选,默认同id) | 学院(可选)</p>
+          <p>首行为表头时自动跳过；单行失败不影响其他行。</p>
+        </el-alert>
+        <el-upload
+          drag
+          accept=".xlsx"
+          :auto-upload="false"
+          :limit="1"
+          :on-change="handleFileChange"
+          :on-exceed="() => ElMessage.warning('一次只能选择一个文件')"
+        >
+          <el-icon style="font-size: 40px; color: #909399;"><UploadFilled /></el-icon>
+          <div>拖拽 .xlsx 文件到此处，或点击选择</div>
+        </el-upload>
+        <div v-if="importResult" class="import-result">
+          <el-divider />
+          <p>共 {{ importResult.total }} 行：成功 <b style="color:#67C23A">{{ importResult.success }}</b> 条，失败 <b style="color:#F56C6C">{{ importResult.fail }}</b> 条</p>
+          <ul v-if="importResult.errors && importResult.errors.length">
+            <li v-for="(err, i) in importResult.errors" :key="i" class="import-error">{{ err }}</li>
+          </ul>
+        </div>
+        <template #footer>
+          <div>
+            <el-button @click="importDialogVisible=false">关闭</el-button>
+            <el-button type="primary" :loading="importing" @click="submitImport">开始导入</el-button>
           </div>
         </template>
       </el-dialog>
@@ -412,11 +621,31 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.edit-actions {
+  margin: 4px 0 12px;
+  display: flex;
+  gap: 10px;
+}
+
 .container {
   margin: 15px 0px;
 }
 .page {
-  margin-top: 12px; 
+  margin-top: 12px;
   text-align: right;
+}
+.import-result {
+  margin-top: 4px;
+}
+.import-result ul {
+  max-height: 140px;
+  overflow-y: auto;
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+.import-error {
+  color: #f56c6c;
+  font-size: 13px;
+  line-height: 20px;
 }
 </style>

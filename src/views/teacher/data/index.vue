@@ -16,13 +16,14 @@ import {
 import VChart from 'vue-echarts'
 
 // 导入API
-import { 
+import {
   getTeacherClazzesApi,
-  getClazzExperimentsApi,
 } from '@/api/tea/clazz'
 
 import {
-  getExperimentDetailApi,
+  getTeacherTasksApi,
+  getTaskDetailApi,
+  getExperimentsApi,
   getExperimentStudentsApi,
 } from '@/api/tea/task'
 
@@ -64,19 +65,21 @@ if (!teaId.value) {
 
 // 响应式数据
 const selectedClassId = ref(null)
-const selectedExperimentId = ref(null)
+const selectedTaskId = ref(null)
 const currentClass = ref(null)
 const currentClazzNum = ref(null)
 const currentExperiment = ref(null)
 
 // 数据状态
 const classOptions = ref([])
-const experimentOptions = ref([])
+const taskOptions = ref([])        // 当前班级的任务选项(按任务id区分,同一实验可对应多个任务)
+const allTasks = ref([])           // 教师全部任务缓存
+const expTitleMap = ref({})        // expId → 实验名称
 const experimentDetail = ref({
-  id: 0, 
-  expId: 0, 
-  endDate: '', 
-  completeCount: 0, 
+  id: 0,
+  expId: 0,
+  endDate: '',
+  completeCount: 0,
   totalCount: 0,
   title: '',
   }
@@ -168,12 +171,11 @@ const fetchTeacherClasses = async () => {
   loadingClasses.value = true
   try {
     const res = await getTeacherClazzesApi(teaId.value)
-    // 返回的数据格式是 [{ classId }, ...]
+    // 后端 /tea/{id}/clazzes 返回 [{ clazzId }]
     classOptions.value = res.data || []
-    console.log(classOptions.value[0].clazzId)
-    // 如果有班级，默认选中第一个
+    // 如果有班级，默认选中第一个并加载其任务(注意字段是 clazzId)
     if (classOptions.value.length > 0) {
-      selectedClassId.value = classOptions.value[0].classId
+      selectedClassId.value = classOptions.value[0].clazzId
       await handleClassChange(selectedClassId.value)
     }
   } catch (error) {
@@ -184,53 +186,50 @@ const fetchTeacherClasses = async () => {
   }
 }
 
-// 获取班级实验任务列表
-const fetchClassExperiments = async (clazzId) => {
+// 获取教师全部任务与实验名称映射(任务为数据主体, 同一实验的多个任务各自独立)
+const fetchAllTasks = async () => {
   loadingExperiments.value = true
-  experimentOptions.value = []
-  selectedExperimentId.value = null
-  experimentDetail.value = null
-  studentData.value = null
-  
   try {
-    const res = await getClazzExperimentsApi(teaId.value, clazzId)
-    // 返回的数据格式是 [{ expId, title }, ...]
-    experimentOptions.value = res.data || []
-    console.log('expOption'+JSON.stringify(experimentOptions))
-    /*
-    // 如果有实验任务，默认选中第一个
-    if (experimentOptions.value.length > 0) {
-      selectedExperimentId.value = experimentOptions.value[0].expId
-      await Promise.all([
-         fetchExperimentDetail(clazzId, selectedExperimentId.value),
-         fetchExperimentStudents(clazzId, selectedExperimentId.value)
-      ])
+    const [tasksRes, expsRes] = await Promise.all([
+      getTeacherTasksApi(teaId.value),
+      getExperimentsApi()
+    ])
+    allTasks.value = tasksRes.data || []
+    expTitleMap.value = {}
+    for (const e of (expsRes.data || [])) {
+      expTitleMap.value[e.expId ?? e.id] = e.title
     }
-      */
   } catch (error) {
-    ElMessage.error('获取实验任务列表失败')
-    console.error('获取实验任务列表失败:', error)
+    ElMessage.error('获取任务列表失败')
+    console.error('获取任务列表失败:', error)
   } finally {
     loadingExperiments.value = false
   }
 }
 
-// 获取实验详情
-const fetchExperimentDetail = async (classId, expId) => {
+// 依据选中班级过滤出对应任务选项
+const buildTaskOptions = (clazzId) => {
+  taskOptions.value = allTasks.value
+    .filter(t => t.clazzId === clazzId)
+    .map(t => ({
+      taskId: t.id,
+      title: expTitleMap.value[t.expId] || `实验${t.expId}`,
+      startDate: t.startDate,
+      endDate: t.endDate
+    }))
+}
+
+// 获取实验详情(按任务id)
+const fetchExperimentDetail = async (taskId) => {
   loadingDetail.value = true
   try {
-    const res = await getExperimentDetailApi(teaId.value, classId, expId)
-    // 返回的数据格式是 { id, expId, endDate, completeCount, totalCount }
+    const res = await getTaskDetailApi(teaId.value, taskId)
     experimentDetail.value = res.data
-    const found = experimentOptions.value.find(item => item.expId === expId)
-    experimentDetail.value.title = found?.title
-    console.log('expDetail'+JSON.stringify(experimentDetail.value))
-    
+    experimentDetail.value.title = expTitleMap.value[res.data?.expId] || '未知实验'
+
     // 更新当前班级的总人数信息
     if (currentClass.value) {
-      console.log(currentClass.value)
       currentClazzNum.value = experimentDetail.value.totalCount
-      console.log('currentClazzNum'+currentClazzNum.value)
     }
   } catch (error) {
     ElMessage.error('获取实验详情失败')
@@ -240,16 +239,13 @@ const fetchExperimentDetail = async (classId, expId) => {
   }
 }
 
-// 获取实验学生名单
-const fetchExperimentStudents = async (classId, expId) => {
+// 获取实验学生名单(按任务id)
+const fetchExperimentStudents = async (taskId, classId) => {
   loadingStudents.value = true
   try {
-    const res = await getExperimentStudentsApi(teaId.value, expId, classId)
+    const res = await getExperimentStudentsApi(teaId.value, taskId, classId)
     // 返回的数据格式是 { completedList, uncompletedList }
-    // completedList: [{ stuId, stuName, score }, ...]
-    // uncompletedList: [{ stuId, stuName }, ...]
     studentData.value = res.data
-    console.log('studentData'+JSON.stringify(studentData))
   } catch (error) {
     ElMessage.error('获取学生名单失败')
     console.error('获取学生名单失败:', error)
@@ -262,40 +258,44 @@ const fetchExperimentStudents = async (classId, expId) => {
 const handleClassChange = async (classId) => {
   if (!classId) {
     currentClass.value = null
-    experimentOptions.value = []
-    selectedExperimentId.value = null
+    taskOptions.value = []
+    selectedTaskId.value = null
     experimentDetail.value = null
     studentData.value = null
     return
   }
-  
+
   // 从班级列表中找出选中的班级信息
   currentClass.value = classId
-  console.log('currentClass'+currentClass.value)
-  
-  // 获取该班级的实验任务列表
-  await fetchClassExperiments(classId)
+
+  // 过滤出该班级的任务, 默认选中第一个
+  buildTaskOptions(classId)
+  selectedTaskId.value = null
+  experimentDetail.value = null
+  studentData.value = null
+  if (taskOptions.value.length > 0) {
+    selectedTaskId.value = taskOptions.value[0].taskId
+    await handleTaskChange(selectedTaskId.value)
+  }
 }
 
-// 实验切换处理
-const handleExperimentChange = async (expId) => {
-  console.log('expId'+expId)
-  if (!expId || !selectedClassId.value) return
-  
-  // 从实验列表中找出选中的实验信息
-  currentExperiment.value = experimentOptions.value.find(e => e.expId === expId) || { expId: expId }
-  console.log('currentexp'+JSON.stringify(currentExperiment))
-  
+// 任务切换处理(按任务id区分, 同一实验的多个任务数据相互独立)
+const handleTaskChange = async (taskId) => {
+  if (!taskId || !selectedClassId.value) return
+
+  currentExperiment.value = taskOptions.value.find(t => t.taskId === taskId) || { taskId }
+
   // 获取实验详情和学生名单
   await Promise.all([
-    fetchExperimentDetail(selectedClassId.value, expId),
-    fetchExperimentStudents(selectedClassId.value, expId)
+    fetchExperimentDetail(taskId),
+    fetchExperimentStudents(taskId, selectedClassId.value)
   ])
 }
 
-// 页面挂载时获取班级列表
-onMounted(() => {
-  fetchTeacherClasses()
+// 页面挂载: 先加载任务与实验名称映射, 再加载班级列表(触发默认任务查询)
+onMounted(async () => {
+  await fetchAllTasks()
+  await fetchTeacherClasses()
 })
 </script>
 
@@ -348,24 +348,24 @@ onMounted(() => {
         <el-skeleton :rows="3" animated />
       </div>
 
-      <!-- 实验选择区域 - 有实验数据时显示 -->
+      <!-- 任务选择区域 - 有任务数据时显示 -->
       <template v-else>
-        <div class="experiment-selector" v-if="experimentOptions.length > 0">
+        <div class="experiment-selector" v-if="taskOptions.length > 0">
           <div class="experiment-buttons">
-            <el-radio-group v-model="selectedExperimentId" @change="handleExperimentChange" >
+            <el-radio-group v-model="selectedTaskId" @change="handleTaskChange" >
               <el-radio-button
-                v-for="exp in experimentOptions"
-                :key="exp.expId"
-                :label="exp.expId"
+                v-for="task in taskOptions"
+                :key="task.taskId"
+                :label="task.taskId"
                 class="custom-radio-button"
               >
-                {{ exp.title }}
+                {{ task.title }} ({{ formatDate(task.startDate) }} ~ {{ formatDate(task.endDate) }})
               </el-radio-button>
             </el-radio-group>
           </div>
         </div>
 
-        <!-- 没有实验数据时的提示 -->
+        <!-- 没有任务数据时的提示 -->
         <el-empty v-else description="该班级暂无实验任务" :image-size="150" />
 
         <!-- 当前实验概览 + 饼图区域 - 有实验数据时显示 -->
@@ -403,7 +403,7 @@ onMounted(() => {
             <el-col :xs="24" :md="12" style="height: 100%; padding: 0;">
               <div class="chart-container" v-loading="loadingDetail">
                 <div class="chart-title">实验完成占比</div>
-                <v-chart class="pie-chart" :option="experimentPieChartOption" autoresize />
+                <v-chart class="pie-chart" :option="experimentPieChartOption" :update-options="{ notMerge: true }" autoresize />
               </div>
             </el-col>
           </el-row>

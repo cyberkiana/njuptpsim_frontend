@@ -61,27 +61,28 @@ const generateBaseTimeSlots = () => {
 
 baseTimeSlots.value = generateBaseTimeSlots()
 
-// 监听日期变化，获取该日期的预约信息
-watch(() => formData.value.date, async (newDate) => {
-  if (!newDate) {
+// 获取当前所选日期的预约信息
+const fetchDayReservations = async () => {
+  const date = formData.value.date
+  if (!date) {
     formData.value.timeSlot = ''
     currentDayReservations.value = []
     return
   }
-  
+
   try {
     loading.value = true
-    const response = await getReservationByDayApi(newDate)
-    // 返回的数据格式为 [{id, day, slot, reservationCount, maxCount}]
+    const response = await getReservationByDayApi(date)
+    // 返回的数据格式为 [{id, day, slot, reservationCount, maxCount, isActive}]
     // 其中slot是整数格式（小时数）
     currentDayReservations.value = response.data || []
-    
+
     // 如果当前已选的时段在该日期不可用，清空选择
     if (formData.value.timeSlot !== '') {
       const hour = formData.value.timeSlot // 直接使用整数hour
       if (!isSlotAvailable(hour)) {
         formData.value.timeSlot = ''
-        ElMessage.warning('所选时段已无余量，请重新选择')
+        ElMessage.warning('所选时段不可预约，请重新选择')
       }
     }
   } catch (error) {
@@ -91,35 +92,45 @@ watch(() => formData.value.date, async (newDate) => {
   } finally {
     loading.value = false
   }
-})
+}
 
-// 判断指定小时是否有余量
+// 监听日期变化，获取该日期的预约信息
+watch(() => formData.value.date, fetchDayReservations)
+
+// 判断指定小时是否可预约（isActive=0 表示该时段禁止预约）
 const isSlotAvailable = (hour) => {
   if (!hour && hour !== 0 || !currentDayReservations.value.length) return true
-  
+
   // 直接使用整数hour进行匹配
   const reservation = currentDayReservations.value.find(r => r.slot === hour)
-  
+
   // 如果没有预约记录，说明该时段可预约（默认maxCount > 0）
   if (!reservation) return true
-  
+
+  // 该时段已被管理员/定时任务关闭预约
+  if (reservation.isActive === 0) return false
+
   // 有预约记录，比较预约数和最大数
   return reservation.reservationCount < reservation.maxCount
 }
 
 // 获取时段的预约状态详情（用于显示）
 const getSlotStatus = (hour) => {
-  if (!currentDayReservations.value.length) { 
+  if (!currentDayReservations.value.length) {
     return { available: true, count: 0, max: 0 } // 默认值
   }
-  
+
   // 直接使用整数hour进行匹配
   const reservation = currentDayReservations.value.find(r => r.slot === hour)
-  
+
   if (!reservation) {
     return { available: true, count: 0, max: 0 } // 默认最大容量0
   }
-  
+
+  if (reservation.isActive === 0) {
+    return { available: false, count: reservation.reservationCount, max: reservation.maxCount }
+  }
+
   return {
     available: reservation.reservationCount < reservation.maxCount,
     count: reservation.reservationCount,
@@ -155,12 +166,20 @@ const handleSubmit = async () => {
   }
 
   try{
-    await addStuReservationApi(studentId.value,formData.value.date,formData.value.timeSlot)
+    const res = await addStuReservationApi(studentId.value,formData.value.date,formData.value.timeSlot)
+    // 后端校验失败（时段关闭/约满等）返回 HTTP 200 + code=0
+    if (res && res.code === 0) {
+      ElMessage.error(res.msg || '预约失败，请重试')
+      fetchDayReservations()
+      return
+    }
   }catch(error){
     console.error('预约失败:', error)
     ElMessage.error(error.response?.data?.message || '预约失败，请重试')
+    return
   }
   ElMessage.success(`预约成功！日期：${formData.value.date}，时段：${selectedSlot.label}`)
+  fetchDayReservations()
 }
 
 // 禁用日期：只能选择近七天（包括今天）
@@ -189,7 +208,7 @@ const formatHourLabel = (hour) => {
         <div class="card-header">
           <el-space>
             <el-icon :size="20"><EditPen /></el-icon>
-            <span class="title">实验室预约登记</span>
+            <span class="title">实验预约登记</span>
           </el-space>
           <span class="sub-title">请选择日期与时段，每个时段为1小时</span>
         </div>
@@ -314,7 +333,7 @@ const formatHourLabel = (hour) => {
         <el-divider>
           <el-icon><Calendar /></el-icon>
         </el-divider>
-        <p class="note-text">• 仅可预约近七天日期 • 每个时段为整点起止 • 请至少提前15分钟到达实验室</p>
+        <p class="note-text">• 仅可预约近七天日期 • 每个时段为整点起止</p>
       </div>
     </el-card>
   </div>

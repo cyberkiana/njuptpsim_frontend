@@ -26,4 +26,14 @@ export const queryTotalNumApi = (params) => request.get("/admin/clazzes/totalNum
 export const queryStuApi = (id) => request.get(`/admin/clazzes/${id}/stus`);
 
 // 将学生移除出班级
-export const deleteStuFromClazzApi = (clazzId, stuId) => request.delete(`/${clazzId}/stus/${stuId}`);
+export const deleteStuFromClazzApi = (clazzId, stuId) => request.delete(`/admin/clazzes/${clazzId}/stus/${stuId}`);
+
+/**
+ * Excel批量导入班级
+ * @param {FormData} formData - 包含 file 字段(.xlsx)的表单数据
+ * @returns {Promise} 返回 { data: { total, success, fail, errors: [] } }
+ */
+export const importClazzesApi = (formData) =>
+  request.post("/admin/clazzes/import", formData, {
+    headers: { "Content-Type": "multipart/form-data" }
+  });

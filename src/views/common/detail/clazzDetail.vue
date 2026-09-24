@@ -12,18 +12,20 @@ const clazzId = route.params.id;
 
 const searchStu = async (id) => {
   try{
+    // 响应拦截器已解包一层, r 即 {code,msg,data}
     const r = await queryStuApi(id);
-    clazzDetail.value = r.data.data;
+    clazzDetail.value = r.data || [];
   }catch (e){
-    alert(e);
+    console.error("获取班级学生名单失败:", e);
+    ElMessage.error("获取班级学生名单失败");
   }
 }
 
 
 const handleDelete = async (row) => {
   try{
-    ElMessageBox.confirm(
-      `确认从${id}班级中删除${row.name}吗？`,
+    await ElMessageBox.confirm(
+      `确认从${clazzId}班级中移除${row.name}吗？`,
       "提示",
       {
         type: "warning",
@@ -34,11 +36,12 @@ const handleDelete = async (row) => {
   }catch(e){
     return;
   }
-  const r =  await deleteStuFromClazzApi(clazzId, row.id);
-  if(r && r.data.code){
-    ElMessage.success("删除成功");
+  const r = await deleteStuFromClazzApi(clazzId, row.id);
+  if(r && r.code){
+    ElMessage.success("移除成功");
+    searchStu(clazzId);
   }else{
-    ElMessage.error(result?.msg || "删除失败");
+    ElMessage.error(r?.msg || "移除失败");
   }
 }
 
@@ -68,12 +71,6 @@ onMounted(() => {
         <el-table-column
           label="账号"
           prop="account"
-          width="200px"
-          align="center"
-        />
-        <el-table-column
-          label="密码"
-          prop="password"
           width="200px"
           align="center"
         />

@@ -19,14 +19,20 @@ request.interceptors.request.use(
       config.headers["Authorization"] = `Bearer ${loginUser.token}`;
     }*/
     const userStore = useUserStore()
-    const token = userStore.getToken()
+    let token = userStore.getToken()
+    // 防御：历史版本曾把 token 用 JSON.stringify 包上引号存入，剥掉再发
+    if (token && token.startsWith('"') && token.endsWith('"')) {
+      token = token.slice(1, -1)
+    }
     console.log(token)
     const id = userStore.getId()
-    
+
     if (token) {
       config.headers["Authorization"] = `Bearer ${token}`
       config.headers["id"] = id || ''
     }
+    // 标记请求发出时是否携带token：登出后残留在途请求(无token)的401不做登出提醒
+    config._hadAuth = !!token
     return config;
   },
   (error) => { //失败回调
@@ -64,6 +70,11 @@ request.interceptors.response.use(
           ElMessage.error(data.message || '请求参数错误');
           break;
         case 401:
+          // 用户已主动退出(token已清空)后仍在途的请求，静默忽略，避免误弹"登录已过期"
+          if (!error.config._hadAuth) {
+            console.warn('未携带token的请求被401拒绝(登出后的残留请求)，已忽略:', error.config.url);
+            break;
+          }
           ElMessage.error('登录已过期，请重新登录');
           handleUnauthorized();
           break;

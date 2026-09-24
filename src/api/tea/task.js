@@ -34,9 +34,10 @@ export const deleteTaskApi = (teaId, taskId) =>
   request.delete(`/tea/${teaId}/tasks/${taskId}`)
 
 
-// 获取实验任务的具体数据
-export const getExperimentDetailApi = (teaId, clazzId, expId) =>
-  request.get(`/tea/${teaId}/clazzed/${clazzId}/exp/${expId}`)
+
+// 按任务id获取任务详情(同一实验的多个任务数据相互区分)
+export const getTaskDetailApi = (teaId, taskId) =>
+  request.get(`/tea/${teaId}/tasks/${taskId}/detail`)
 
 // 获取实验的学生完成情况
 export const getExperimentStudentsApi = (teaId, taskId, clazzId) =>

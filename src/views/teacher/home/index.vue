@@ -1,6 +1,6 @@
 <!-- 更新后的教师实验发布页面，使用新的API格式 -->
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getTeacherTasksApi, publishTaskApi, getExperimentsApi, deleteTaskApi } from '@/api/tea/task'
 import { getTeacherClazzesApi } from '@/api/tea/clazz'
@@ -43,6 +43,13 @@ const experimentOptions = ref([])
 // 已发布的实验任务列表
 const publishedTasks = ref([])
 
+// 按班级筛选（all=全部班级）
+const filterClassId = ref('all')
+const filteredTasks = computed(() => {
+  if (filterClassId.value === 'all') return publishedTasks.value
+  return publishedTasks.value.filter(t => t.clazzId === filterClassId.value)
+})
+
 // 加载状态
 const loading = ref({
   classes: false,
@@ -58,10 +65,10 @@ const fetchClasses = async () => {
   try {
     const data = await getTeacherClazzesApi(teaId.value)
     // 假设后端返回 [{ id, name, studentCount }]
-    classOptions.value = data.data.map(item => ({
-      value: item.id,
-      label: `${item.name} (共${item.studentCount}人)`,
-      studentCount: item.studentCount
+    // 后端 /tea/{id}/clazzes 返回 [{ clazzId }]
+    classOptions.value = (data.data || []).map(item => ({
+      value: item.clazzId ?? item.id,
+      label: item.clazzId ?? item.id
     }))
   } catch (error) {
     console.error('获取班级列表失败:', error)
@@ -76,9 +83,9 @@ const fetchExperiments = async () => {
   loading.value.experiments = true
   try {
     const data = await getExperimentsApi()
-    // 后端返回 [{ id, title }]
+    // 后端返回 [{ expId, title }]
     experimentOptions.value = data.data.map(item => ({
-      value: item.id,
+      value: item.expId ?? item.id,
       label: item.title
     }))
   } catch (error) {
@@ -155,8 +162,8 @@ const getCompletionPercentage = (completed, total) => {
 
 // 初始化加载数据
 onMounted(async () => {
-  // 并行加载班级和实验列表
-  await Promise.all([fetchExperiments()])
+  // 并行加载班级和实验列表(班级列表供"已发布实验"筛选下拉使用)
+  await Promise.all([fetchClasses(), fetchExperiments()])
   // 加载任务列表（需要依赖班级和实验列表来显示名称）
   await fetchTasks()
 })
@@ -169,14 +176,18 @@ onMounted(async () => {
       <template #header>
         <div class="card-header">
           <el-icon><List /></el-icon>
-          <span>已发布实验 ({{ publishedTasks.length }})</span>
+          <span>已发布实验 ({{ filteredTasks.length }})</span>
+          <el-select v-model="filterClassId" size="small" style="width: 160px; margin-left: 12px;">
+            <el-option label="全部班级" value="all" />
+            <el-option v-for="c in classOptions" :key="c.value" :label="c.label" :value="c.value" />
+          </el-select>
         </div>
       </template>
 
       <!-- 加载状态 -->
       <div v-loading="loading.tasks" element-loading-text="加载中...">
         <!-- 实验列表表格 -->
-        <el-table :data="publishedTasks" stripe style="width: 100%">
+        <el-table :data="filteredTasks" stripe style="width: 100%">
           <el-table-column prop="clazzId" label="班级ID" width="100" />
           <el-table-column prop="title" label="实验名称" min-width="160" />
           <el-table-column prop="startDate" label="开始日期" width="120" />

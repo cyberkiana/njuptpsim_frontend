@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import RootHomeView from '@/views/root/home/index.vue'
 import ClazzView from '@/views/root/clazz/index.vue'
 import LogView from '@/views/root/log/index.vue'
+import CommentManageView from '@/views/root/comment/index.vue'
 import UserView from '@/views/root/user/index.vue'
 import RootLayoutView from '@/views/root/layout/index.vue'
 import LoginView from '@/views/common/login/loginView.vue'
@@ -20,6 +21,7 @@ import StuReservationView from '@/views/stu/reservation/index.vue'
 import StuHomeView from '@/views/stu/home/index.vue'
 import ExpView from '@/views/common/exp/expView.vue'
 import ExpDetail from '@/views/common/exp/exp.vue'
+import ExpTest from '@/views/common/exp/expTest.vue'
 import Egg from '@/views/eggs/egg.vue'
 
 import { useUserStore } from '@/stores/user'
@@ -38,10 +40,12 @@ const router = createRouter({
       {path: 'clazz', name: 'clazz', component: ClazzView},
       {path: 'user', name: 'user', component: UserView},
       {path: 'log', name: 'log', component: LogView},
+      {path: 'comment', name: 'comment', component: CommentManageView},
       {path: 'clazz/:id', name: 'clazzDetail', component: ClazzDetail},
       {path: 'exp', name: 'rootExp', component: RootExpView},
       {path: 'exp/:id', name: 'rootExpDetail', component: RootExpDetail},
       {path: 'reservation', name: 'rootReservation', component: RootReservationView},
+      {path: 'userDetail', name: 'rootUserDetail', component: UserDetail},
      ]
     },
     {
@@ -56,6 +60,7 @@ const router = createRouter({
         {path: 'exp', name: 'teaExp', component: ExpView},
         {path: 'exp/:id', name: 'teaExpDetail', component: ExpDetail},
         {path: 'home', name: 'teaHome', component: TeaHomeView},
+        {path: 'userDetail', name: 'teaUserDetail', component: UserDetail},
       ]
     },
     {
@@ -69,12 +74,15 @@ const router = createRouter({
         {path: 'exp', name: 'stuExp', component: ExpView},
         {path: 'exp/:id', name: 'stuExpDetail', component: ExpDetail},
         {path: 'home', name: 'stuHome', component: StuHomeView},
+        {path: 'userDetail', name: 'stuUserDetail', component: UserDetail},
       ]
     },
     {path: '/login', name: 'login', component: LoginView},
     {path: '/', redirect: '/login'},
-    {path: '/user/:id', name: 'userDetail', component: UserDetail},
+    {path: '/user', component: Egg},
     {path: '/eggs', name: 'egg', component: Egg},
+    // WebGL实验测试页面 (egg文件夹内的粒子系统)
+    {path: '/expTest', name: 'expTest', component: ExpTest},
   ]
 })
 
@@ -82,7 +90,7 @@ router.beforeEach((to, from, next) => {
   const userStore = useUserStore()
   
   // 需要登录才能访问的路由
-  if (to.meta.requiresAuth) {
+  if (to.meta.requireAuth) {
     // 检查是否已登录
     if (userStore.isLoggedIn) {
       // 已登录，允许访问
